@@ -479,6 +479,13 @@ HYPERVISOR_dm_op(
 	return _hypercall3(int, dm_op, dom, nr_bufs, bufs);
 }
 
+static inline long
+HYPERVISOR_hello_hypercall(
+	int op)
+{
+	return _hypercall1(int, hello_hypercall, op);
+}
+
 static inline void
 MULTI_fpu_taskswitch(struct multicall_entry *mcl, int set)
 {

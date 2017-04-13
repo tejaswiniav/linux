@@ -79,7 +79,7 @@
 #define __HYPERVISOR_domctl               36
 #define __HYPERVISOR_kexec_op             37
 #define __HYPERVISOR_tmem_op              38
-#define __HYPERVISOR_xc_reserved_op       39 /* reserved for XenClient */
+#define __HYPERVISOR_hello_hypercall      39
 #define __HYPERVISOR_xenpmu_op            40
 #define __HYPERVISOR_dm_op                41
 
@@ -93,6 +93,7 @@
 #define __HYPERVISOR_arch_6               54
 #define __HYPERVISOR_arch_7               55
 
+/* #define __HYPERVISOR_xc_reserved_op       39 *//* reserved for XenClient */
 /*
  * VIRTUAL INTERRUPTS
  *
