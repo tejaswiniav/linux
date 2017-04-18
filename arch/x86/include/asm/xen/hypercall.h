@@ -486,6 +486,13 @@ HYPERVISOR_hello_hypercall(
 	return _hypercall1(int, hello_hypercall, op);
 }
 
+static inline unsigned long
+HYPERVISOR_get_maddr(
+	void *arg)
+{
+	return _hypercall1(unsigned long, get_maddr, arg);
+}
+
 static inline void
 MULTI_fpu_taskswitch(struct multicall_entry *mcl, int set)
 {
