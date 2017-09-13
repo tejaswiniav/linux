@@ -109,6 +109,7 @@ struct nvme_dev {
 	/* host memory buffer support: */
 	u64 host_mem_size;
 	u32 nr_host_mem_descs;
+	dma_addr_t host_mem_descs_dma;
 	struct nvme_host_mem_buf_desc *host_mem_descs;
 	void **host_mem_desc_bufs;
 };
@@ -555,8 +556,10 @@ static blk_status_t nvme_setup_prps(struct nvme_dev *dev, struct request *req)
 	int nprps, i;
 
 	length -= (page_size - offset);
-	if (length <= 0)
+	if (length <= 0) {
+		iod->first_dma = 0;
 		return BLK_STS_OK;
+	}
 
 	dma_len -= (page_size - offset);
 	if (dma_len) {
@@ -666,7 +669,7 @@ static blk_status_t nvme_map_data(struct nvme_dev *dev, struct request *req,
 		if (blk_rq_map_integrity_sg(q, req->bio, &iod->meta_sg) != 1)
 			goto out_unmap;
 
-		if (rq_data_dir(req))
+		if (req_op(req) == REQ_OP_WRITE)
 			nvme_dif_remap(req, nvme_dif_prep);
 
 		if (!dma_map_sg(dev->dev, &iod->meta_sg, 1, dma_dir))
@@ -694,7 +697,7 @@ static void nvme_unmap_data(struct nvme_dev *dev, struct request *req)
 	if (iod->nents) {
 		dma_unmap_sg(dev->dev, iod->sg, iod->nents, dma_dir);
 		if (blk_integrity_rq(req)) {
-			if (!rq_data_dir(req))
+			if (req_op(req) == REQ_OP_READ)
 				nvme_dif_remap(req, nvme_dif_complete);
 			dma_unmap_sg(dev->dev, &iod->meta_sg, 1, dma_dir);
 		}
@@ -1376,6 +1379,7 @@ static int nvme_alloc_admin_tags(struct nvme_dev *dev)
 
 		if (blk_mq_alloc_tag_set(&dev->admin_tagset))
 			return -ENOMEM;
+		dev->ctrl.admin_tagset = &dev->admin_tagset;
 
 		dev->ctrl.admin_q = blk_mq_init_queue(&dev->admin_tagset);
 		if (IS_ERR(dev->ctrl.admin_q)) {
@@ -1565,15 +1569,9 @@ static inline void nvme_release_cmb(struct nvme_dev *dev)
 
 static int nvme_set_host_mem(struct nvme_dev *dev, u32 bits)
 {
-	size_t len = dev->nr_host_mem_descs * sizeof(*dev->host_mem_descs);
+	u64 dma_addr = dev->host_mem_descs_dma;
 	struct nvme_command c;
-	u64 dma_addr;
 	int ret;
-
-	dma_addr = dma_map_single(dev->dev, dev->host_mem_descs, len,
-			DMA_TO_DEVICE);
-	if (dma_mapping_error(dev->dev, dma_addr))
-		return -ENOMEM;
 
 	memset(&c, 0, sizeof(c));
 	c.features.opcode	= nvme_admin_set_features;
@@ -1591,7 +1589,6 @@ static int nvme_set_host_mem(struct nvme_dev *dev, u32 bits)
 			 "failed to set host mem (err %d, flags %#x).\n",
 			 ret, bits);
 	}
-	dma_unmap_single(dev->dev, dma_addr, len, DMA_TO_DEVICE);
 	return ret;
 }
 
@@ -1609,7 +1606,9 @@ static void nvme_free_host_mem(struct nvme_dev *dev)
 
 	kfree(dev->host_mem_desc_bufs);
 	dev->host_mem_desc_bufs = NULL;
-	kfree(dev->host_mem_descs);
+	dma_free_coherent(dev->dev,
+			dev->nr_host_mem_descs * sizeof(*dev->host_mem_descs),
+			dev->host_mem_descs, dev->host_mem_descs_dma);
 	dev->host_mem_descs = NULL;
 }
 
@@ -1617,6 +1616,7 @@ static int nvme_alloc_host_mem(struct nvme_dev *dev, u64 min, u64 preferred)
 {
 	struct nvme_host_mem_buf_desc *descs;
 	u32 chunk_size, max_entries, len;
+	dma_addr_t descs_dma;
 	int i = 0;
 	void **bufs;
 	u64 size = 0, tmp;
@@ -1627,7 +1627,8 @@ retry:
 	tmp = (preferred + chunk_size - 1);
 	do_div(tmp, chunk_size);
 	max_entries = tmp;
-	descs = kcalloc(max_entries, sizeof(*descs), GFP_KERNEL);
+	descs = dma_zalloc_coherent(dev->dev, max_entries * sizeof(*descs),
+			&descs_dma, GFP_KERNEL);
 	if (!descs)
 		goto out;
 
@@ -1661,6 +1662,7 @@ retry:
 	dev->nr_host_mem_descs = i;
 	dev->host_mem_size = size;
 	dev->host_mem_descs = descs;
+	dev->host_mem_descs_dma = descs_dma;
 	dev->host_mem_desc_bufs = bufs;
 	return 0;
 
@@ -1674,7 +1676,8 @@ out_free_bufs:
 
 	kfree(bufs);
 out_free_descs:
-	kfree(descs);
+	dma_free_coherent(dev->dev, max_entries * sizeof(*descs), descs,
+			descs_dma);
 out:
 	/* try a smaller chunk size if we failed early */
 	if (chunk_size >= PAGE_SIZE * 2 && (i == 0 || size < min)) {

@@ -504,7 +504,6 @@ static int multipath_clone_and_map(struct dm_target *ti, struct request *rq,
 		if (queue_dying) {
 			atomic_inc(&m->pg_init_in_progress);
 			activate_or_offline_path(pgpath);
-			return DM_MAPIO_REQUEUE;
 		}
 		return DM_MAPIO_DELAY_REQUEUE;
 	}
@@ -566,7 +565,7 @@ static int __multipath_map_bio(struct multipath *m, struct bio *bio, struct dm_m
 	mpio->nr_bytes = nr_bytes;
 
 	bio->bi_status = 0;
-	bio->bi_bdev = pgpath->path.dev->bdev;
+	bio_set_dev(bio, pgpath->path.dev->bdev);
 	bio->bi_opf |= REQ_FAILFAST_TRANSPORT;
 
 	if (pgpath->pg->ps.type->start_io)
@@ -1458,7 +1457,6 @@ static int noretry_error(blk_status_t error)
 	case BLK_STS_TARGET:
 	case BLK_STS_NEXUS:
 	case BLK_STS_MEDIUM:
-	case BLK_STS_RESOURCE:
 		return 1;
 	}
 
